@@ -1,0 +1,6 @@
+kafka-python-ng
+requests
+pymongo[srv]
+flask
+python-dotenv
+certifi

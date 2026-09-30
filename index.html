@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Real-Time Crypto Risk Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1"></script>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #0f172a; color: #e2e8f0; margin: 0; padding: 20px; }
+    h1 { margin: 0 0 4px; }
+    .sub { color: #94a3b8; margin-bottom: 20px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 16px; }
+    .card { background: #1e293b; border-radius: 12px; padding: 16px; }
+    select { background: #0f172a; color: #e2e8f0; border: 1px solid #334155; padding: 4px 8px; border-radius: 6px; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { text-align: left; padding: 6px; border-bottom: 1px solid #334155; }
+    .up { color: #4ade80; } .down { color: #f87171; }
+  </style>
+</head>
+<body>
+  <h1>Real-Time Crypto Risk Dashboard</h1>
+  <div class="sub">CoinGecko → Kafka → MongoDB Atlas → Flask · updates every 10s</div>
+
+  <div class="grid">
+    <div class="card">
+      <h3>Price trend
+        <select id="coin"></select>
+        <select id="mins">
+          <option value="30">30 min</option>
+          <option value="60" selected>1 hour</option>
+          <option value="360">6 hours</option>
+        </select>
+      </h3>
+      <canvas id="priceChart"></canvas>
+    </div>
+    <div class="card"><h3>24h change by coin (%)</h3><canvas id="changeChart"></canvas></div>
+    <div class="card"><h3>Current rolling volatility</h3><canvas id="volChart"></canvas></div>
+    <div class="card">
+      <h3>Latest volatility alerts</h3>
+      <table>
+        <thead><tr><th>Time</th><th>Coin</th><th>Price</th><th>Move</th><th>Type</th></tr></thead>
+        <tbody id="alerts"></tbody>
+      </table>
+    </div>
+  </div>
+
+<script>
+const $ = id => document.getElementById(id);
+const mk = (id, type, opts = {}) => new Chart($(id), { type, data: { labels: [], datasets: [] }, options: { animation: false, ...opts } });
+
+const priceChart  = mk('priceChart', 'line');
+const changeChart = mk('changeChart', 'bar', { plugins: { legend: { display: false } } });
+const volChart    = mk('volChart', 'bar', { plugins: { legend: { display: false } } });
+
+async function j(url) { return (await fetch(url)).json(); }
+
+async function loadCoins() {
+  const coins = await j('/api/coins');
+  $('coin').innerHTML = coins.map(c => `<option>${c}</option>`).join('');
+}
+
+async function refreshPrice() {
+  const data = await j(`/api/history?coin=${$('coin').value}&minutes=${$('mins').value}`);
+  priceChart.data.labels = data.map(d => new Date(d.ts).toLocaleTimeString());
+  priceChart.data.datasets = [{
+    label: 'Price (USD)', data: data.map(d => d.price),
+    borderColor: '#38bdf8', tension: 0.2, pointRadius: 0
+  }];
+  priceChart.update();
+}
+
+async function refreshSummary() {
+  const s = await j('/api/summary');
+  const labels = s.map(x => x.symbol);
+  changeChart.data.labels = labels;
+  changeChart.data.datasets = [{
+    data: s.map(x => x.change_24h_pct),
+    backgroundColor: s.map(x => x.change_24h_pct >= 0 ? '#4ade80' : '#f87171')
+  }];
+  changeChart.update();
+  volChart.data.labels = labels;
+  volChart.data.datasets = [{ data: s.map(x => x.volatility), backgroundColor: '#fbbf24' }];
+  volChart.update();
+}
+
+async function refreshAlerts() {
+  const a = await j('/api/alerts');
+  $('alerts').innerHTML = a.map(r => `
+    <tr><td>${new Date(r.ts).toLocaleTimeString()}</td><td>${r.symbol}</td>
+    <td>$${r.price}</td><td class="${r.ret >= 0 ? 'up' : 'down'}">${r.ret}%</td><td>${r.type}</td></tr>`).join('');
+}
+
+function refreshAll() { refreshPrice(); refreshSummary(); refreshAlerts(); }
+$('coin').onchange = $('mins').onchange = refreshPrice;
+
+loadCoins().then(() => { refreshAll(); setInterval(refreshAll, 10000); });
+</script>
+</body>
+</html>
